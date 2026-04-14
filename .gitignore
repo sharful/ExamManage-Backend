@@ -10,6 +10,7 @@ env/
 
 # Environment variables
 .env
+ATT09073.env
 
 # Test / coverage
 .pytest_cache/
