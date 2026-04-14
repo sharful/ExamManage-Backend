@@ -8,6 +8,10 @@ from app.database import engine
 from app.routers import auth as auth_router
 from app.routers import invigilators as invigilators_router
 from app.routers import rooms as rooms_router
+from app.routers import exams as exams_router
+from app.routers import assignments as assignments_router
+from app.routers import dashboard as dashboard_router
+from app.routers import reports as reports_router
 
 
 @asynccontextmanager
@@ -42,6 +46,10 @@ app.add_middleware(
 app.include_router(auth_router.router)
 app.include_router(invigilators_router.router)
 app.include_router(rooms_router.router)
+app.include_router(exams_router.router)
+app.include_router(assignments_router.router)
+app.include_router(dashboard_router.router)
+app.include_router(reports_router.router)
 
 
 @app.get("/api/health")
