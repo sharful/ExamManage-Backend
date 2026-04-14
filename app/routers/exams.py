@@ -27,6 +27,8 @@ router = APIRouter(prefix="/api/exams", tags=["exams"])
 async def list_exams(
     name: Optional[str] = Query(None),
     exam_date: Optional[date] = Query(None),
+    date_from: Optional[date] = Query(None),
+    date_to: Optional[date] = Query(None),
     room: Optional[uuid.UUID] = Query(None),
     page: int = Query(1, ge=1),
     limit: int = Query(20, ge=1, le=200),
@@ -34,7 +36,14 @@ async def list_exams(
     _: User = Depends(get_current_user),
 ):
     return await svc.get_list(
-        db, name=name, exam_date=exam_date, room_id=room, page=page, limit=limit
+        db,
+        name=name,
+        exam_date=exam_date,
+        date_from=date_from,
+        date_to=date_to,
+        room_id=room,
+        page=page,
+        limit=limit,
     )
 
 

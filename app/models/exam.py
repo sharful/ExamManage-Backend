@@ -52,6 +52,7 @@ class Exam(Base):
 
     __table_args__ = (
         Index("ix_exams_exam_date", "exam_date"),
+        Index("ix_exams_date_slot", "exam_date", "time_slot"),
     )
 
 
@@ -111,4 +112,7 @@ class ExamAssignment(Base):
             name="ck_exam_assignments_inv1_ne_inv2",
         ),
         Index("ix_exam_assignments_exam_room", "exam_id", "room_id"),
+        Index("ix_exam_assignments_head_invigilator_id", "head_invigilator_id"),
+        Index("ix_exam_assignments_invigilator1_id", "invigilator1_id"),
+        Index("ix_exam_assignments_invigilator2_id", "invigilator2_id"),
     )

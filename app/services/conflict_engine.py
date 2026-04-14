@@ -8,6 +8,13 @@ Rules (from project_plan.md Section 5):
   3. Uniqueness within room  — head / inv1 / inv2 must all be distinct
   4. Capacity check          — seats <= room.max_seats
   5. Minimum staffing        — head_invigilator_id and invigilator1_id required
+
+Query optimisations (Step 5.5):
+  - All invigilators fetched in a single IN query (was one query per ID).
+  - Double-booking check uses a single query across all invigilator IDs
+    (was one query per ID).  The composite index ix_exams_date_slot and the
+    per-column FK indexes ix_exam_assignments_head/inv1/inv2_invigilator_id
+    make both queries efficient.
 """
 
 import uuid
@@ -75,17 +82,19 @@ async def validate_assignment(
         ))
         return errors
 
-    # ── Fetch each invigilator once ──────────────────────────────────────────
-    inv_map: dict[uuid.UUID, Optional[Invigilator]] = {}
-    for inv_id in ids:
-        if inv_id not in inv_map:
-            result = await db.execute(
-                select(Invigilator).where(
-                    Invigilator.id == inv_id,
-                    Invigilator.is_deleted.is_(False),
-                )
+    # ── Fetch ALL invigilators in one query (was N separate queries) ─────────
+    invigs = (
+        await db.execute(
+            select(Invigilator).where(
+                Invigilator.id.in_(ids),
+                Invigilator.is_deleted.is_(False),
             )
-            inv_map[inv_id] = result.scalar_one_or_none()
+        )
+    ).scalars().all()
+    inv_map: dict[uuid.UUID, Optional[Invigilator]] = {inv.id: inv for inv in invigs}
+    # Mark IDs that weren't returned (not found / soft-deleted)
+    for inv_id in ids:
+        inv_map.setdefault(inv_id, None)
 
     # ── Rule 1: Availability check ───────────────────────────────────────────
     for inv_id in ids:
@@ -103,27 +112,38 @@ async def validate_assignment(
                 invigilator_id=inv_id,
             ))
 
-    # ── Rule 2: Single-duty rule (double-booking) ────────────────────────────
-    for inv_id in ids:
-        q = (
-            select(ExamAssignment)
-            .join(ExamAssignment.exam)
-            .where(
-                Exam.exam_date == exam.exam_date,
-                Exam.time_slot == exam.time_slot,
-                or_(
-                    ExamAssignment.head_invigilator_id == inv_id,
-                    ExamAssignment.invigilator1_id == inv_id,
-                    ExamAssignment.invigilator2_id == inv_id,
-                ),
-            )
+    # ── Rule 2: Single-duty rule — one query for ALL invigilators ────────────
+    # Uses ix_exams_date_slot and ix_exam_assignments_head/inv1/inv2_id indexes.
+    ids_set = set(ids)
+    double_booking_q = (
+        select(ExamAssignment)
+        .join(ExamAssignment.exam)
+        .where(
+            Exam.exam_date == exam.exam_date,
+            Exam.time_slot == exam.time_slot,
+            or_(
+                ExamAssignment.head_invigilator_id.in_(ids),
+                ExamAssignment.invigilator1_id.in_(ids),
+                ExamAssignment.invigilator2_id.in_(ids),
+            ),
         )
-        if exclude_assignment_id is not None:
-            q = q.where(ExamAssignment.id != exclude_assignment_id)
+    )
+    if exclude_assignment_id is not None:
+        double_booking_q = double_booking_q.where(
+            ExamAssignment.id != exclude_assignment_id
+        )
 
-        result = await db.execute(q)
-        existing = result.scalars().all()
-        if existing:
+    booked_assignments = (await db.execute(double_booking_q)).scalars().all()
+
+    # Map each conflicting invigilator ID → the assignment that blocks it
+    first_conflict: dict[uuid.UUID, ExamAssignment] = {}
+    for a in booked_assignments:
+        for role_id in (a.head_invigilator_id, a.invigilator1_id, a.invigilator2_id):
+            if role_id is not None and role_id in ids_set and role_id not in first_conflict:
+                first_conflict[role_id] = a
+
+    for inv_id in ids:
+        if inv_id in first_conflict:
             inv = inv_map.get(inv_id)
             inv_name = inv.name if inv else str(inv_id)
             errors.append(ConflictError(
@@ -133,7 +153,7 @@ async def validate_assignment(
                     "room on the same date and time slot"
                 ),
                 invigilator_id=inv_id,
-                details={"conflicting_assignment_id": str(existing[0].id)},
+                details={"conflicting_assignment_id": str(first_conflict[inv_id].id)},
             ))
 
     # ── Rule 4: Capacity check ───────────────────────────────────────────────

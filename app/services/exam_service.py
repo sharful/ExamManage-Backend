@@ -70,6 +70,8 @@ async def get_list(
     *,
     name: Optional[str] = None,
     exam_date: Optional[date] = None,
+    date_from: Optional[date] = None,
+    date_to: Optional[date] = None,
     room_id: Optional[uuid.UUID] = None,
     page: int = 1,
     limit: int = 20,
@@ -80,6 +82,10 @@ async def get_list(
         q = q.where(Exam.exam_name.ilike(f"%{name}%"))
     if exam_date:
         q = q.where(Exam.exam_date == exam_date)
+    if date_from:
+        q = q.where(Exam.exam_date >= date_from)
+    if date_to:
+        q = q.where(Exam.exam_date <= date_to)
     if room_id:
         q = q.where(
             Exam.id.in_(
