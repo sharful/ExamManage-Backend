@@ -6,7 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.database import get_db
 from app.middleware.auth import get_current_user
 from app.models.user import User
-from app.schemas.room import RoomCreate, RoomListResponse, RoomResponse, RoomUpdate
+from app.schemas.room import RoomCapacityWarning, RoomCreate, RoomListResponse, RoomResponse, RoomUpdate
 from app.services import room_service as svc
 
 router = APIRouter(prefix="/api/rooms", tags=["rooms"])
@@ -26,10 +26,10 @@ async def list_rooms(
 async def create_room(
     body: RoomCreate,
     db: AsyncSession = Depends(get_db),
-    _: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_user),
 ):
     try:
-        room = await svc.create(db, body)
+        room = await svc.create(db, body, user_id=current_user.id)
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc))
     return RoomResponse.model_validate(room)
@@ -51,14 +51,20 @@ async def get_room(
 async def update_room(
     room_id: uuid.UUID,
     body: RoomUpdate,
+    force: bool = Query(False, description="Skip capacity-violation check and save anyway"),
     db: AsyncSession = Depends(get_db),
-    _: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_user),
 ):
     room = await svc.get_by_id(db, room_id)
     if room is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Room not found")
     try:
-        room = await svc.update(db, room, body)
+        room = await svc.update(db, room, body, user_id=current_user.id, force=force)
+    except RoomCapacityWarning as exc:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=exc.model_dump(),
+        )
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc))
     return RoomResponse.model_validate(room)
@@ -68,12 +74,12 @@ async def update_room(
 async def delete_room(
     room_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
-    _: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_user),
 ):
     room = await svc.get_by_id(db, room_id)
     if room is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Room not found")
     try:
-        await svc.delete(db, room)
+        await svc.delete(db, room, user_id=current_user.id)
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc))

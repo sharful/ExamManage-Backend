@@ -1,11 +1,28 @@
 import re
 import uuid
-from datetime import datetime
+from datetime import date, datetime
 from typing import List, Optional
 
 from pydantic import BaseModel, EmailStr, field_validator
 
 from app.models.invigilator import InvigilatorStatus
+
+
+# ── Availability warning ───────────────────────────────────────────────────────
+
+class AffectedAssignmentInfo(BaseModel):
+    assignment_id: uuid.UUID
+    exam_id: uuid.UUID
+    exam_name: str
+    exam_date: date
+    room_id: uuid.UUID
+    room_number: str
+    role: str  # "head" | "invigilator1" | "invigilator2"
+
+
+class InvigilatorUpdateResponse(BaseModel):
+    invigilator: "InvigilatorResponse"
+    affected_assignments: List[AffectedAssignmentInfo] = []
 
 _MOBILE_RE = re.compile(r"^\+?[1-9]\d{6,14}$")
 
@@ -97,3 +114,31 @@ class PaginationMeta(BaseModel):
 class InvigilatorListResponse(BaseModel):
     data: List[InvigilatorResponse]
     meta: PaginationMeta
+
+
+# ── Workload ──────────────────────────────────────────────────────────────────
+
+class WorkloadMonthEntry(BaseModel):
+    year: int
+    month: int
+    count: int
+
+
+class InvigilatorWorkloadResponse(BaseModel):
+    invigilator_id: uuid.UUID
+    name: str
+    total_assignments: int
+    assignments_by_month: List[WorkloadMonthEntry]
+    assigned_dates: List[date]
+
+
+class WorkloadSummaryItem(BaseModel):
+    invigilator_id: uuid.UUID
+    name: str
+    assignment_count: int
+
+
+class WorkloadSummaryResponse(BaseModel):
+    month: int
+    year: int
+    data: List[WorkloadSummaryItem]

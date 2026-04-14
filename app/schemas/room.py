@@ -5,6 +5,20 @@ from typing import List, Optional
 from pydantic import BaseModel, field_validator
 
 
+# ── Capacity warning ───────────────────────────────────────────────────────────
+
+class CapacityViolation(BaseModel):
+    assignment_id: uuid.UUID
+    exam_id: uuid.UUID
+    exam_name: str
+    seats: int  # current seats value that exceeds new capacity
+
+
+class RoomCapacityWarning(BaseModel):
+    detail: str
+    violations: List[CapacityViolation]
+
+
 class RoomCreate(BaseModel):
     room_number: str
     max_seats: int
