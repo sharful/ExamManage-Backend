@@ -56,7 +56,7 @@ async def create_assignment(
     if errors:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail=[e.model_dump() for e in errors],
+            detail=[e.model_dump(mode="json") for e in errors],
         )
     return AssignmentResponse.model_validate(assignment)
 
@@ -121,7 +121,7 @@ async def update_assignment(
     if errors:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail=[e.model_dump() for e in errors],
+            detail=[e.model_dump(mode="json") for e in errors],
         )
     return AssignmentResponse.model_validate(updated)
 
