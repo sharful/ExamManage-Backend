@@ -219,7 +219,7 @@ async def generate_duty_list(
     # Flatten to per-invigilator rows
     flat: list[list] = []
     for r in rows:
-        slot = r.time_slot.capitalize()
+        slot = r.time_slot.value.capitalize()
         flat.append([r.head_name, "Head Invigilator", r.room_number, r.exam_name, slot])
         flat.append([r.inv1_name, "Invigilator", r.room_number, r.exam_name, slot])
         if r.inv2_name:
@@ -299,7 +299,7 @@ async def generate_room_schedule(
 
     flat: list[list] = []
     for r in rows:
-        slot = r.time_slot.capitalize()
+        slot = r.time_slot.value.capitalize()
         invigs = r.head_name + " (H), " + r.inv1_name
         if r.inv2_name:
             invigs += ", " + r.inv2_name
@@ -379,7 +379,7 @@ async def generate_daily_schedule(
     room_rows: list[list] = []
     duty_rows: list[list] = []
     for r in rows:
-        slot = r.time_slot.capitalize()
+        slot = r.time_slot.value.capitalize()
         invigs = r.head_name + " (H), " + r.inv1_name
         if r.inv2_name:
             invigs += ", " + r.inv2_name
@@ -486,7 +486,7 @@ async def get_preview_data(
         headers = ["Invigilator Name", "Role", "Room", "Exam", "Time Slot"]
         flat: list[list] = []
         for r in rows:
-            slot = r.time_slot.capitalize()
+            slot = r.time_slot.value.capitalize()
             flat.append([r.head_name, "Head Invigilator", r.room_number, r.exam_name, slot])
             flat.append([r.inv1_name, "Invigilator", r.room_number, r.exam_name, slot])
             if r.inv2_name:
@@ -497,7 +497,7 @@ async def get_preview_data(
         headers = ["Room", "Exam", "Time Slot", "Seats", "Invigilators"]
         flat = []
         for r in rows:
-            slot = r.time_slot.capitalize()
+            slot = r.time_slot.value.capitalize()
             invigs = r.head_name + " (H), " + r.inv1_name
             if r.inv2_name:
                 invigs += ", " + r.inv2_name
@@ -510,7 +510,7 @@ async def get_preview_data(
     room_rows: list[list] = []
     duty_rows: list[list] = []
     for r in rows:
-        slot = r.time_slot.capitalize()
+        slot = r.time_slot.value.capitalize()
         invigs = r.head_name + " (H), " + r.inv1_name
         if r.inv2_name:
             invigs += ", " + r.inv2_name
