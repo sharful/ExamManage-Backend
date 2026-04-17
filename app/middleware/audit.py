@@ -1,3 +1,4 @@
+import datetime
 import uuid
 from typing import Any
 
@@ -12,6 +13,8 @@ def _serialize(value: Any) -> Any:
         return None
     if isinstance(value, uuid.UUID):
         return str(value)
+    if isinstance(value, (datetime.date, datetime.datetime)):
+        return value.isoformat()
     if hasattr(value, "value"):  # enums
         return value.value
     return value
