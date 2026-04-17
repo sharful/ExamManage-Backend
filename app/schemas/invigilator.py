@@ -24,7 +24,7 @@ class InvigilatorUpdateResponse(BaseModel):
     invigilator: "InvigilatorResponse"
     affected_assignments: List[AffectedAssignmentInfo] = []
 
-_MOBILE_RE = re.compile(r"^\+?[1-9]\d{6,14}$")
+_MOBILE_RE = re.compile(r"^\+?\d{7,15}$")
 
 
 class InvigilatorCreate(BaseModel):
