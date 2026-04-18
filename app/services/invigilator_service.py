@@ -23,7 +23,7 @@ from app.schemas.invigilator import (
     WorkloadSummaryResponse,
 )
 
-_FIELDS = ("name", "department", "institute", "mobile", "email", "status", "remarks")
+_FIELDS = ("name", "department", "institute", "designation", "mobile", "email", "status", "remarks")
 
 
 def _snapshot(inv: Invigilator) -> dict:
@@ -44,6 +44,7 @@ async def create(
         name=data.name,
         department=data.department,
         institute=data.institute,
+        designation=data.designation,
         mobile=data.mobile,
         email=data.email,
         status=data.status,

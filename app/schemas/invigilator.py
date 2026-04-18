@@ -31,6 +31,7 @@ class InvigilatorCreate(BaseModel):
     name: str
     department: Optional[str] = None
     institute: Optional[str] = None
+    designation: Optional[str] = None
     mobile: Optional[str] = None
     email: Optional[EmailStr] = None
     status: InvigilatorStatus = InvigilatorStatus.available
@@ -61,6 +62,7 @@ class InvigilatorUpdate(BaseModel):
     name: Optional[str] = None
     department: Optional[str] = None
     institute: Optional[str] = None
+    designation: Optional[str] = None
     mobile: Optional[str] = None
     email: Optional[EmailStr] = None
     status: Optional[InvigilatorStatus] = None
@@ -94,6 +96,7 @@ class InvigilatorResponse(BaseModel):
     name: str
     department: Optional[str]
     institute: Optional[str]
+    designation: Optional[str]
     mobile: Optional[str]
     email: Optional[str]
     status: InvigilatorStatus

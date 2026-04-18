@@ -23,6 +23,7 @@ class Invigilator(Base):
     name: Mapped[str] = mapped_column(String(100), nullable=False)
     department: Mapped[str | None] = mapped_column(String(100), nullable=True)
     institute: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    designation: Mapped[str | None] = mapped_column(String(100), nullable=True)
     mobile: Mapped[str | None] = mapped_column(String(15), nullable=True)
     email: Mapped[str | None] = mapped_column(String(255), nullable=True)
     status: Mapped[InvigilatorStatus] = mapped_column(
