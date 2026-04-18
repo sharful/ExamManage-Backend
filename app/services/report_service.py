@@ -138,9 +138,13 @@ def _pdf_subheading(text: str, styles):
     return Paragraph(f"<b>{text}</b>", styles["Normal"])
 
 
-def _render_college_header_png(font_path: str, font_size_pt: int = 20, dpi: int = 300) -> bytes:
+def _has_bengali(text: str) -> bool:
+    return any('\u0980' <= c <= '\u09FF' for c in text)
+
+
+def _render_bangla_png(text: str, font_path: str, font_size_pt: int = 20, dpi: int = 300) -> bytes:
     """
-    Shape Bengali text with HarfBuzz and render with FreeType so that
+    Shape Bengali (or mixed) text with HarfBuzz and render with FreeType so that
     complex-script conjuncts (e.g. ল্ল) form correctly — ReportLab's
     own TTFont renderer ignores OpenType GSUB substitution tables.
     """
@@ -157,7 +161,7 @@ def _render_college_header_png(font_path: str, font_size_pt: int = 20, dpi: int 
     hb_font.scale = (upem, upem)
 
     hb_buf = hb.Buffer()
-    hb_buf.add_str(_COLLEGE_NAME)
+    hb_buf.add_str(text)
     hb_buf.guess_segment_properties()
     hb.shape(hb_font, hb_buf)
 
@@ -209,6 +213,38 @@ def _render_college_header_png(font_path: str, font_size_pt: int = 20, dpi: int 
     return out.getvalue()
 
 
+def _bangla_cell_image(text: str, font_path: str):
+    """Return a ReportLab Image of Bengali text suitable for embedding in a table cell."""
+    from reportlab.lib.units import cm
+    from reportlab.platypus import Image as RLImage
+    from PIL import Image as PILImage
+
+    dpi = 150
+    png = _render_bangla_png(text, font_path, font_size_pt=9, dpi=dpi)
+    pil_img = PILImage.open(BytesIO(png))
+    w_px, h_px = pil_img.size
+    w_cm = w_px / dpi * 2.54
+    h_cm = h_px / dpi * 2.54
+    img = RLImage(BytesIO(png), width=w_cm * cm, height=h_cm * cm)
+    img.hAlign = "LEFT"
+    return img
+
+
+def _prepare_pdf_data(data: list[list]) -> list[list]:
+    """Replace any table cell containing Bengali text with a HarfBuzz-rendered PNG image."""
+    font_path = os.path.join(_FONTS_DIR, "NikoshBAN.ttf")
+    result = []
+    for row in data:
+        new_row = []
+        for cell in row:
+            if isinstance(cell, str) and _has_bengali(cell):
+                new_row.append(_bangla_cell_image(cell, font_path))
+            else:
+                new_row.append(cell)
+        result.append(new_row)
+    return result
+
+
 def _pdf_college_header():
     from reportlab.lib.units import cm
     from reportlab.platypus import Image as RLImage
@@ -216,7 +252,7 @@ def _pdf_college_header():
 
     font_path = os.path.join(_FONTS_DIR, "NikoshBAN.ttf")
     dpi = 300
-    png_bytes = _render_college_header_png(font_path, font_size_pt=20, dpi=dpi)
+    png_bytes = _render_bangla_png(_COLLEGE_NAME, font_path, font_size_pt=20, dpi=dpi)
 
     pil_img = PILImage.open(BytesIO(png_bytes))
     w_px, h_px = pil_img.size
@@ -351,7 +387,7 @@ def _duty_list_pdf(headers: list[str], flat: list[list], date_str: str) -> bytes
     ]
 
     col_widths = [6 * cm, 4 * cm, 3 * cm, 9 * cm, 3.5 * cm]
-    data = [headers] + flat
+    data = _prepare_pdf_data([headers] + flat)
     story.append(_pdf_table(data, col_widths))
 
     doc.build(story)
@@ -435,7 +471,7 @@ def _room_schedule_pdf(headers: list[str], flat: list[list], date_str: str) -> b
     ]
 
     col_widths = [3 * cm, 8 * cm, 3.5 * cm, 2.5 * cm, 11 * cm]
-    data = [headers] + flat
+    data = _prepare_pdf_data([headers] + flat)
     story.append(_pdf_table(data, col_widths))
 
     doc.build(story)
@@ -529,11 +565,11 @@ def _daily_schedule_pdf(
         Spacer(1, 0.3 * cm),
         _pdf_subheading("Room Schedule", styles),
         Spacer(1, 0.2 * cm),
-        _pdf_table([room_headers] + room_rows, [3 * cm, 8 * cm, 3.5 * cm, 2.5 * cm, 11 * cm]),
+        _pdf_table(_prepare_pdf_data([room_headers] + room_rows), [3 * cm, 8 * cm, 3.5 * cm, 2.5 * cm, 11 * cm]),
         Spacer(1, 0.6 * cm),
         _pdf_subheading("Invigilator Duty List", styles),
         Spacer(1, 0.2 * cm),
-        _pdf_table([duty_headers] + duty_rows, [6 * cm, 4 * cm, 3 * cm, 9 * cm, 3.5 * cm]),
+        _pdf_table(_prepare_pdf_data([duty_headers] + duty_rows), [6 * cm, 4 * cm, 3 * cm, 9 * cm, 3.5 * cm]),
     ]
 
     doc.build(story)
