@@ -4,9 +4,13 @@ Report generation service.
 Generates duty-list, room-schedule, and daily-schedule reports in PDF (ReportLab)
 or Excel (openpyxl) format.
 """
+import os
 from datetime import date
 from io import BytesIO
 from typing import Literal, NamedTuple
+
+_FONTS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "fonts")
+_COLLEGE_NAME = "কুমিল্লা সরকারি মহিলা কলেজ"
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -134,6 +138,39 @@ def _pdf_subheading(text: str, styles):
     return Paragraph(f"<b>{text}</b>", styles["Normal"])
 
 
+def _pdf_college_header():
+    from reportlab.lib.enums import TA_CENTER
+    from reportlab.lib.styles import ParagraphStyle
+    from reportlab.pdfbase import pdfmetrics
+    from reportlab.pdfbase.ttfonts import TTFont
+    from reportlab.platypus import Paragraph
+
+    font_path = os.path.join(_FONTS_DIR, "NikoshBAN.ttf")
+    if "NikoshBAN" not in pdfmetrics.getRegisteredFontNames():
+        pdfmetrics.registerFont(TTFont("NikoshBAN", font_path))
+
+    style = ParagraphStyle(
+        "CollegeHeader",
+        fontName="NikoshBAN",
+        fontSize=20,
+        leading=26,
+        alignment=TA_CENTER,
+    )
+    return Paragraph(_COLLEGE_NAME, style)
+
+
+def _excel_add_college_header(ws, num_cols: int) -> None:
+    from openpyxl.styles import Alignment, Font
+    from openpyxl.utils import get_column_letter
+
+    ws.merge_cells(f"A1:{get_column_letter(num_cols)}1")
+    cell = ws["A1"]
+    cell.value = _COLLEGE_NAME
+    cell.font = Font(name="NikoshBAN", bold=True, size=20)
+    cell.alignment = Alignment(horizontal="center", vertical="center")
+    ws.row_dimensions[1].height = 30
+
+
 # ---------------------------------------------------------------------------
 # Excel helpers
 # ---------------------------------------------------------------------------
@@ -238,6 +275,8 @@ def _duty_list_pdf(headers: list[str], flat: list[list], date_str: str) -> bytes
 
     buf, doc, styles = _pdf_doc("Invigilator Duty List", date_str)
     story = [
+        _pdf_college_header(),
+        Spacer(1, 0.3 * cm),
         _pdf_heading(f"Invigilator Duty List — {date_str}", styles),
         Spacer(1, 0.4 * cm),
     ]
@@ -260,21 +299,23 @@ def _duty_list_excel(
     ws.title = "Duty List"
     ws.sheet_properties.tabColor = "1A3C5E"
 
+    _excel_add_college_header(ws, len(headers))
+
     # Title
-    ws.merge_cells("A1:E1")
+    ws.merge_cells("A2:E2")
     from openpyxl.styles import Alignment, Font
-    title_cell = ws["A1"]
+    title_cell = ws["A2"]
     title_cell.value = f"Invigilator Duty List — {date_str}"
     title_cell.font = Font(name="Calibri", bold=True, size=13, color="1A3C5E")
     title_cell.alignment = Alignment(horizontal="center", vertical="center")
-    ws.row_dimensions[1].height = 22
+    ws.row_dimensions[2].height = 22
 
-    _excel_write_headers_offset(ws, headers, start_row=2)
-    for i, row_data in enumerate(flat, start=3):
+    _excel_write_headers_offset(ws, headers, start_row=3)
+    for i, row_data in enumerate(flat, start=4):
         _excel_write_row(ws, i, row_data)
 
     _excel_autofit(ws, headers, flat)
-    _excel_finalize_offset(ws, len(flat), len(headers), header_row=2)
+    _excel_finalize_offset(ws, len(flat), len(headers), header_row=3)
 
     buf = BytesIO()
     wb.save(buf)
@@ -318,6 +359,8 @@ def _room_schedule_pdf(headers: list[str], flat: list[list], date_str: str) -> b
 
     buf, doc, styles = _pdf_doc("Room Schedule", date_str)
     story = [
+        _pdf_college_header(),
+        Spacer(1, 0.3 * cm),
         _pdf_heading(f"Room Schedule — {date_str}", styles),
         Spacer(1, 0.4 * cm),
     ]
@@ -341,19 +384,21 @@ def _room_schedule_excel(
     ws.title = "Room Schedule"
     ws.sheet_properties.tabColor = "1A3C5E"
 
-    ws.merge_cells("A1:E1")
-    title_cell = ws["A1"]
+    _excel_add_college_header(ws, len(headers))
+
+    ws.merge_cells("A2:E2")
+    title_cell = ws["A2"]
     title_cell.value = f"Room Schedule — {date_str}"
     title_cell.font = Font(name="Calibri", bold=True, size=13, color="1A3C5E")
     title_cell.alignment = Alignment(horizontal="center", vertical="center")
-    ws.row_dimensions[1].height = 22
+    ws.row_dimensions[2].height = 22
 
-    _excel_write_headers_offset(ws, headers, start_row=2)
-    for i, row_data in enumerate(flat, start=3):
+    _excel_write_headers_offset(ws, headers, start_row=3)
+    for i, row_data in enumerate(flat, start=4):
         _excel_write_row(ws, i, row_data)
 
     _excel_autofit(ws, headers, flat)
-    _excel_finalize_offset(ws, len(flat), len(headers), header_row=2)
+    _excel_finalize_offset(ws, len(flat), len(headers), header_row=3)
 
     buf = BytesIO()
     wb.save(buf)
@@ -409,6 +454,8 @@ def _daily_schedule_pdf(
     duty_headers = ["Invigilator Name", "Role", "Room", "Exam", "Time Slot"]
 
     story = [
+        _pdf_college_header(),
+        Spacer(1, 0.3 * cm),
         _pdf_heading(f"Daily Exam Schedule — {date_str}", styles),
         Spacer(1, 0.3 * cm),
         _pdf_subheading("Room Schedule", styles),
@@ -437,33 +484,35 @@ def _daily_schedule_excel(
     ws1.title = "Room Schedule"
     ws1.sheet_properties.tabColor = "1A3C5E"
     room_headers = ["Room", "Exam", "Time Slot", "Seats", "Invigilators"]
-    ws1.merge_cells("A1:E1")
-    c = ws1["A1"]
+    _excel_add_college_header(ws1, len(room_headers))
+    ws1.merge_cells("A2:E2")
+    c = ws1["A2"]
     c.value = f"Room Schedule — {date_str}"
     c.font = Font(name="Calibri", bold=True, size=13, color="1A3C5E")
     c.alignment = Alignment(horizontal="center", vertical="center")
-    ws1.row_dimensions[1].height = 22
-    _excel_write_headers_offset(ws1, room_headers, start_row=2)
-    for i, row_data in enumerate(room_rows, start=3):
+    ws1.row_dimensions[2].height = 22
+    _excel_write_headers_offset(ws1, room_headers, start_row=3)
+    for i, row_data in enumerate(room_rows, start=4):
         _excel_write_row(ws1, i, row_data)
     _excel_autofit(ws1, room_headers, room_rows)
-    _excel_finalize_offset(ws1, len(room_rows), len(room_headers), header_row=2)
+    _excel_finalize_offset(ws1, len(room_rows), len(room_headers), header_row=3)
 
     # --- Sheet 2: Duty List ---
     ws2 = wb.create_sheet("Duty List")
     ws2.sheet_properties.tabColor = "2E6DA4"
     duty_headers = ["Invigilator Name", "Role", "Room", "Exam", "Time Slot"]
-    ws2.merge_cells("A1:E1")
-    c2 = ws2["A1"]
+    _excel_add_college_header(ws2, len(duty_headers))
+    ws2.merge_cells("A2:E2")
+    c2 = ws2["A2"]
     c2.value = f"Invigilator Duty List — {date_str}"
     c2.font = Font(name="Calibri", bold=True, size=13, color="1A3C5E")
     c2.alignment = Alignment(horizontal="center", vertical="center")
-    ws2.row_dimensions[1].height = 22
-    _excel_write_headers_offset(ws2, duty_headers, start_row=2)
-    for i, row_data in enumerate(duty_rows, start=3):
+    ws2.row_dimensions[2].height = 22
+    _excel_write_headers_offset(ws2, duty_headers, start_row=3)
+    for i, row_data in enumerate(duty_rows, start=4):
         _excel_write_row(ws2, i, row_data)
     _excel_autofit(ws2, duty_headers, duty_rows)
-    _excel_finalize_offset(ws2, len(duty_rows), len(duty_headers), header_row=2)
+    _excel_finalize_offset(ws2, len(duty_rows), len(duty_headers), header_row=3)
 
     buf = BytesIO()
     wb.save(buf)
