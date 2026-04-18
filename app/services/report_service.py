@@ -138,25 +138,94 @@ def _pdf_subheading(text: str, styles):
     return Paragraph(f"<b>{text}</b>", styles["Normal"])
 
 
+def _render_college_header_png(font_path: str, font_size_pt: int = 20, dpi: int = 300) -> bytes:
+    """
+    Shape Bengali text with HarfBuzz and render with FreeType so that
+    complex-script conjuncts (e.g. ল্ল) form correctly — ReportLab's
+    own TTFont renderer ignores OpenType GSUB substitution tables.
+    """
+    import uharfbuzz as hb
+    import freetype
+    from PIL import Image
+
+    px_size = int(font_size_pt * dpi / 72)
+
+    blob = hb.Blob.from_file_path(font_path)
+    hb_face = hb.Face(blob)
+    upem = hb_face.upem
+    hb_font = hb.Font(hb_face)
+    hb_font.scale = (upem, upem)
+
+    hb_buf = hb.Buffer()
+    hb_buf.add_str(_COLLEGE_NAME)
+    hb_buf.guess_segment_properties()
+    hb.shape(hb_font, hb_buf)
+
+    infos = hb_buf.glyph_infos
+    positions = hb_buf.glyph_positions
+    px_per_unit = px_size / upem
+
+    ft_face = freetype.Face(font_path)
+    ft_face.set_pixel_sizes(0, px_size)
+    ascender = ft_face.size.ascender >> 6
+    descender = -(ft_face.size.descender >> 6)
+    line_h = ascender + descender
+
+    total_advance = int(sum(p.x_advance for p in positions) * px_per_unit)
+    pad_x, pad_y = 10, 6
+    img_w = total_advance + 2 * pad_x
+    img_h = line_h + 2 * pad_y
+
+    img = Image.new("RGB", (max(img_w, 1), max(img_h, 1)), (255, 255, 255))
+    pixels = img.load()
+    x_pen, baseline = pad_x, pad_y + ascender
+
+    for info, pos in zip(infos, positions):
+        glyph_id = info.codepoint
+        x_adv = int(pos.x_advance * px_per_unit)
+        x_off = int(pos.x_offset * px_per_unit)
+        y_off = int(pos.y_offset * px_per_unit)
+        try:
+            ft_face.load_glyph(glyph_id, freetype.FT_LOAD_RENDER)
+        except Exception:
+            x_pen += x_adv
+            continue
+        bm = ft_face.glyph.bitmap
+        left, top = ft_face.glyph.bitmap_left, ft_face.glyph.bitmap_top
+        pitch = abs(bm.pitch)
+        gx, gy = x_pen + x_off + left, baseline - top - y_off
+        for row in range(bm.rows):
+            for col in range(bm.width):
+                alpha = bm.buffer[row * pitch + col]
+                if alpha:
+                    px_x, px_y = gx + col, gy + row
+                    if 0 <= px_x < img_w and 0 <= px_y < img_h:
+                        v = 255 - alpha
+                        pixels[px_x, px_y] = (v, v, v)
+        x_pen += x_adv
+
+    out = BytesIO()
+    img.save(out, format="PNG")
+    return out.getvalue()
+
+
 def _pdf_college_header():
-    from reportlab.lib.enums import TA_CENTER
-    from reportlab.lib.styles import ParagraphStyle
-    from reportlab.pdfbase import pdfmetrics
-    from reportlab.pdfbase.ttfonts import TTFont
-    from reportlab.platypus import Paragraph
+    from reportlab.lib.units import cm
+    from reportlab.platypus import Image as RLImage
+    from PIL import Image as PILImage
 
     font_path = os.path.join(_FONTS_DIR, "NikoshBAN.ttf")
-    if "NikoshBAN" not in pdfmetrics.getRegisteredFontNames():
-        pdfmetrics.registerFont(TTFont("NikoshBAN", font_path))
+    dpi = 300
+    png_bytes = _render_college_header_png(font_path, font_size_pt=20, dpi=dpi)
 
-    style = ParagraphStyle(
-        "CollegeHeader",
-        fontName="NikoshBAN",
-        fontSize=20,
-        leading=26,
-        alignment=TA_CENTER,
-    )
-    return Paragraph(_COLLEGE_NAME, style)
+    pil_img = PILImage.open(BytesIO(png_bytes))
+    w_px, h_px = pil_img.size
+    w_cm = w_px / dpi * 2.54
+    h_cm = h_px / dpi * 2.54
+
+    rl_img = RLImage(BytesIO(png_bytes), width=w_cm * cm, height=h_cm * cm)
+    rl_img.hAlign = "CENTER"
+    return rl_img
 
 
 def _excel_add_college_header(ws, num_cols: int) -> None:
