@@ -1,16 +1,38 @@
 """
 Report generation service.
 
-Generates duty-list, room-schedule, and daily-schedule reports in PDF (ReportLab)
+Generates duty-list, room-schedule, and daily-schedule reports in PDF (WeasyPrint)
 or Excel (openpyxl) format.
+
+PDFs are produced from Jinja2 HTML templates rendered by WeasyPrint, which uses
+Pango + HarfBuzz for OpenType shaping. This means Bangla conjuncts (e.g. ক্ষ, ল্ল)
+form correctly and the text in the resulting PDF is real, selectable, copy-paste-
+able Unicode — no PNG rasterization required.
 """
 import os
 from datetime import date
 from io import BytesIO
+from pathlib import Path
 from typing import Literal, NamedTuple
 
-_FONTS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "fonts")
+_BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+_FONTS_DIR = os.path.abspath(os.path.join(_BASE_DIR, "..", "fonts"))
+_TEMPLATES_DIR = os.path.abspath(os.path.join(_BASE_DIR, "..", "templates"))
+_FONT_PATH = os.path.join(_FONTS_DIR, "NotoSansBengali-Regular.ttf")
 _COLLEGE_NAME = "কুমিল্লা সরকারি মহিলা কলেজ"
+
+def _is_valid_sfnt_font(path: str) -> bool:
+    # TrueType/OpenType signatures.
+    signatures = {b"\x00\x01\x00\x00", b"OTTO", b"ttcf", b"true"}
+    try:
+        with open(path, "rb") as f:
+            return f.read(4) in signatures
+    except OSError:
+        return False
+
+
+_FONT_FILE_URL = Path(_FONT_PATH).as_uri() if _is_valid_sfnt_font(_FONT_PATH) else None
+
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -67,201 +89,34 @@ async def _fetch_rows(db: AsyncSession, target_date: date) -> list[AssignmentRow
 
 
 # ---------------------------------------------------------------------------
-# PDF helpers
+# PDF helpers (WeasyPrint + Jinja2)
 # ---------------------------------------------------------------------------
 
-def _pdf_doc(title: str, date_str: str) -> tuple:
-    """Return (buffer, doc, styles) for a new PDF document."""
-    from reportlab.lib import colors
-    from reportlab.lib.pagesizes import A4, landscape
-    from reportlab.lib.styles import getSampleStyleSheet
-    from reportlab.lib.units import cm
-    from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer
+import logging
 
-    buf = BytesIO()
-    doc = SimpleDocTemplate(
-        buf,
-        pagesize=landscape(A4),
-        leftMargin=1.5 * cm,
-        rightMargin=1.5 * cm,
-        topMargin=2 * cm,
-        bottomMargin=2 * cm,
+from jinja2 import Environment, FileSystemLoader, select_autoescape
+
+# Surface WeasyPrint warnings (font fallbacks, @font-face load failures, etc.)
+# at WARNING level. They go to the standard Python logger named 'weasyprint'.
+logging.getLogger("weasyprint").setLevel(logging.WARNING)
+if not logging.getLogger("weasyprint").handlers:
+    logging.getLogger("weasyprint").addHandler(logging.StreamHandler())
+
+_jinja_env = Environment(
+    loader=FileSystemLoader(_TEMPLATES_DIR),
+    autoescape=select_autoescape(["html"]),
+)
+
+
+def _render_pdf(template_name: str, context: dict) -> bytes:
+    from weasyprint import HTML
+
+    html_str = _jinja_env.get_template(template_name).render(
+        college_name=_COLLEGE_NAME,
+        font_file_url=_FONT_FILE_URL,
+        **context,
     )
-    styles = getSampleStyleSheet()
-    return buf, doc, styles
-
-
-def _pdf_table(data: list[list], col_widths: list[float]):
-    """Build a styled ReportLab Table."""
-    from reportlab.lib import colors
-    from reportlab.platypus import Table, TableStyle
-
-    tbl = Table(data, colWidths=col_widths, repeatRows=1)
-    tbl.setStyle(
-        TableStyle(
-            [
-                # Header row
-                ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#1a3c5e")),
-                ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
-                ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
-                ("FONTSIZE", (0, 0), (-1, 0), 10),
-                ("BOTTOMPADDING", (0, 0), (-1, 0), 8),
-                ("TOPPADDING", (0, 0), (-1, 0), 8),
-                # Body rows
-                ("FONTNAME", (0, 1), (-1, -1), "Helvetica"),
-                ("FONTSIZE", (0, 1), (-1, -1), 9),
-                ("TOPPADDING", (0, 1), (-1, -1), 5),
-                ("BOTTOMPADDING", (0, 1), (-1, -1), 5),
-                # Alternating row colours
-                ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, colors.HexColor("#f0f4f8")]),
-                # Grid
-                ("GRID", (0, 0), (-1, -1), 0.5, colors.HexColor("#aab4be")),
-                ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
-                ("ALIGN", (0, 0), (-1, -1), "LEFT"),
-            ]
-        )
-    )
-    return tbl
-
-
-def _pdf_heading(text: str, styles):
-    from reportlab.platypus import Paragraph
-
-    style = styles["Heading1"]
-    style.textColor = "#1a3c5e"
-    return Paragraph(text, style)
-
-
-def _pdf_subheading(text: str, styles):
-    from reportlab.platypus import Paragraph
-
-    return Paragraph(f"<b>{text}</b>", styles["Normal"])
-
-
-def _has_bengali(text: str) -> bool:
-    return any('\u0980' <= c <= '\u09FF' for c in text)
-
-
-def _render_bangla_png(text: str, font_path: str, font_size_pt: int = 20, dpi: int = 300) -> bytes:
-    """
-    Shape Bengali (or mixed) text with HarfBuzz and render with FreeType so that
-    complex-script conjuncts (e.g. ল্ল) form correctly — ReportLab's
-    own TTFont renderer ignores OpenType GSUB substitution tables.
-    """
-    import uharfbuzz as hb
-    import freetype
-    from PIL import Image
-
-    px_size = int(font_size_pt * dpi / 72)
-
-    blob = hb.Blob.from_file_path(font_path)
-    hb_face = hb.Face(blob)
-    upem = hb_face.upem
-    hb_font = hb.Font(hb_face)
-    hb_font.scale = (upem, upem)
-
-    hb_buf = hb.Buffer()
-    hb_buf.add_str(text)
-    hb_buf.guess_segment_properties()
-    hb.shape(hb_font, hb_buf)
-
-    infos = hb_buf.glyph_infos
-    positions = hb_buf.glyph_positions
-    px_per_unit = px_size / upem
-
-    ft_face = freetype.Face(font_path)
-    ft_face.set_pixel_sizes(0, px_size)
-    ascender = ft_face.size.ascender >> 6
-    descender = -(ft_face.size.descender >> 6)
-    line_h = ascender + descender
-
-    total_advance = int(sum(p.x_advance for p in positions) * px_per_unit)
-    pad_x, pad_y = 10, 6
-    img_w = total_advance + 2 * pad_x
-    img_h = line_h + 2 * pad_y
-
-    img = Image.new("RGB", (max(img_w, 1), max(img_h, 1)), (255, 255, 255))
-    pixels = img.load()
-    x_pen, baseline = pad_x, pad_y + ascender
-
-    for info, pos in zip(infos, positions):
-        glyph_id = info.codepoint
-        x_adv = int(pos.x_advance * px_per_unit)
-        x_off = int(pos.x_offset * px_per_unit)
-        y_off = int(pos.y_offset * px_per_unit)
-        try:
-            ft_face.load_glyph(glyph_id, freetype.FT_LOAD_RENDER)
-        except Exception:
-            x_pen += x_adv
-            continue
-        bm = ft_face.glyph.bitmap
-        left, top = ft_face.glyph.bitmap_left, ft_face.glyph.bitmap_top
-        pitch = abs(bm.pitch)
-        gx, gy = x_pen + x_off + left, baseline - top - y_off
-        for row in range(bm.rows):
-            for col in range(bm.width):
-                alpha = bm.buffer[row * pitch + col]
-                if alpha:
-                    px_x, px_y = gx + col, gy + row
-                    if 0 <= px_x < img_w and 0 <= px_y < img_h:
-                        v = 255 - alpha
-                        pixels[px_x, px_y] = (v, v, v)
-        x_pen += x_adv
-
-    out = BytesIO()
-    img.save(out, format="PNG")
-    return out.getvalue()
-
-
-def _bangla_cell_image(text: str, font_path: str):
-    """Return a ReportLab Image of Bengali text suitable for embedding in a table cell."""
-    from reportlab.lib.units import cm
-    from reportlab.platypus import Image as RLImage
-    from PIL import Image as PILImage
-
-    dpi = 150
-    png = _render_bangla_png(text, font_path, font_size_pt=9, dpi=dpi)
-    pil_img = PILImage.open(BytesIO(png))
-    w_px, h_px = pil_img.size
-    w_cm = w_px / dpi * 2.54
-    h_cm = h_px / dpi * 2.54
-    img = RLImage(BytesIO(png), width=w_cm * cm, height=h_cm * cm)
-    img.hAlign = "LEFT"
-    return img
-
-
-def _prepare_pdf_data(data: list[list]) -> list[list]:
-    """Replace any table cell containing Bengali text with a HarfBuzz-rendered PNG image."""
-    font_path = os.path.join(_FONTS_DIR, "NikoshBAN.ttf")
-    result = []
-    for row in data:
-        new_row = []
-        for cell in row:
-            if isinstance(cell, str) and _has_bengali(cell):
-                new_row.append(_bangla_cell_image(cell, font_path))
-            else:
-                new_row.append(cell)
-        result.append(new_row)
-    return result
-
-
-def _pdf_college_header():
-    from reportlab.lib.units import cm
-    from reportlab.platypus import Image as RLImage
-    from PIL import Image as PILImage
-
-    font_path = os.path.join(_FONTS_DIR, "NikoshBAN.ttf")
-    dpi = 300
-    png_bytes = _render_bangla_png(_COLLEGE_NAME, font_path, font_size_pt=20, dpi=dpi)
-
-    pil_img = PILImage.open(BytesIO(png_bytes))
-    w_px, h_px = pil_img.size
-    w_cm = w_px / dpi * 2.54
-    h_cm = h_px / dpi * 2.54
-
-    rl_img = RLImage(BytesIO(png_bytes), width=w_cm * cm, height=h_cm * cm)
-    rl_img.hAlign = "CENTER"
-    return rl_img
+    return HTML(string=html_str, base_url=_TEMPLATES_DIR).write_pdf()
 
 
 def _excel_add_college_header(ws, num_cols: int) -> None:
@@ -271,7 +126,7 @@ def _excel_add_college_header(ws, num_cols: int) -> None:
     ws.merge_cells(f"A1:{get_column_letter(num_cols)}1")
     cell = ws["A1"]
     cell.value = _COLLEGE_NAME
-    cell.font = Font(name="NikoshBAN", bold=True, size=20)
+    cell.font = Font(name="Noto Sans Bengali", bold=True, size=20)
     cell.alignment = Alignment(horizontal="center", vertical="center")
     ws.row_dimensions[1].height = 30
 
@@ -325,6 +180,8 @@ def _excel_write_row(ws, row_num: int, values: list) -> None:
 
 
 def _excel_autofit(ws, headers: list[str], all_rows: list[list]) -> None:
+    from openpyxl.utils import get_column_letter
+
     for col_idx, header in enumerate(headers, 1):
         max_len = len(header)
         for row in all_rows:
@@ -332,7 +189,7 @@ def _excel_autofit(ws, headers: list[str], all_rows: list[list]) -> None:
             if len(val) > max_len:
                 max_len = len(val)
         # clamp width
-        ws.column_dimensions[ws.cell(1, col_idx).column_letter].width = min(max_len + 2, 50)
+        ws.column_dimensions[get_column_letter(col_idx)].width = min(max_len + 2, 50)
 
 
 def _excel_finalize(ws, num_rows: int, num_cols: int) -> None:
@@ -375,23 +232,10 @@ async def generate_duty_list(
 
 
 def _duty_list_pdf(headers: list[str], flat: list[list], date_str: str) -> bytes:
-    from reportlab.lib.units import cm
-    from reportlab.platypus import Spacer
-
-    buf, doc, styles = _pdf_doc("Invigilator Duty List", date_str)
-    story = [
-        _pdf_college_header(),
-        Spacer(1, 0.3 * cm),
-        _pdf_heading(f"Invigilator Duty List — {date_str}", styles),
-        Spacer(1, 0.4 * cm),
-    ]
-
-    col_widths = [6 * cm, 4 * cm, 3 * cm, 9 * cm, 3.5 * cm]
-    data = _prepare_pdf_data([headers] + flat)
-    story.append(_pdf_table(data, col_widths))
-
-    doc.build(story)
-    return buf.getvalue()
+    return _render_pdf(
+        "reports/duty_list.html",
+        {"headers": headers, "rows": flat, "date_str": date_str},
+    )
 
 
 def _duty_list_excel(
@@ -459,23 +303,10 @@ async def generate_room_schedule(
 
 
 def _room_schedule_pdf(headers: list[str], flat: list[list], date_str: str) -> bytes:
-    from reportlab.lib.units import cm
-    from reportlab.platypus import Spacer
-
-    buf, doc, styles = _pdf_doc("Room Schedule", date_str)
-    story = [
-        _pdf_college_header(),
-        Spacer(1, 0.3 * cm),
-        _pdf_heading(f"Room Schedule — {date_str}", styles),
-        Spacer(1, 0.4 * cm),
-    ]
-
-    col_widths = [3 * cm, 8 * cm, 3.5 * cm, 2.5 * cm, 11 * cm]
-    data = _prepare_pdf_data([headers] + flat)
-    story.append(_pdf_table(data, col_widths))
-
-    doc.build(story)
-    return buf.getvalue()
+    return _render_pdf(
+        "reports/room_schedule.html",
+        {"headers": headers, "rows": flat, "date_str": date_str},
+    )
 
 
 def _room_schedule_excel(
@@ -550,30 +381,16 @@ async def generate_daily_schedule(
 def _daily_schedule_pdf(
     room_rows: list[list], duty_rows: list[list], date_str: str
 ) -> bytes:
-    from reportlab.lib.units import cm
-    from reportlab.platypus import PageBreak, Spacer
-
-    buf, doc, styles = _pdf_doc("Daily Schedule", date_str)
-
-    room_headers = ["Room", "Exam", "Time Slot", "Seats", "Invigilators"]
-    duty_headers = ["Invigilator Name", "Role", "Room", "Exam", "Time Slot"]
-
-    story = [
-        _pdf_college_header(),
-        Spacer(1, 0.3 * cm),
-        _pdf_heading(f"Daily Exam Schedule — {date_str}", styles),
-        Spacer(1, 0.3 * cm),
-        _pdf_subheading("Room Schedule", styles),
-        Spacer(1, 0.2 * cm),
-        _pdf_table(_prepare_pdf_data([room_headers] + room_rows), [3 * cm, 8 * cm, 3.5 * cm, 2.5 * cm, 11 * cm]),
-        Spacer(1, 0.6 * cm),
-        _pdf_subheading("Invigilator Duty List", styles),
-        Spacer(1, 0.2 * cm),
-        _pdf_table(_prepare_pdf_data([duty_headers] + duty_rows), [6 * cm, 4 * cm, 3 * cm, 9 * cm, 3.5 * cm]),
-    ]
-
-    doc.build(story)
-    return buf.getvalue()
+    return _render_pdf(
+        "reports/daily_schedule.html",
+        {
+            "room_headers": ["Room", "Exam", "Time Slot", "Seats", "Invigilators"],
+            "room_rows": room_rows,
+            "duty_headers": ["Invigilator Name", "Role", "Room", "Exam", "Time Slot"],
+            "duty_rows": duty_rows,
+            "date_str": date_str,
+        },
+    )
 
 
 def _daily_schedule_excel(

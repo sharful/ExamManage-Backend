@@ -1,0 +1,33 @@
+{% macro college_header(name) %}
+<div class="college-header">{{ name }}</div>
+{% endmacro %}
+
+{% macro report_title(text) %}
+<h1 class="report-title">{{ text }}</h1>
+{% endmacro %}
+
+{% macro section_subtitle(text) %}
+<h2 class="section-subtitle">{{ text }}</h2>
+{% endmacro %}
+
+{% macro data_table(headers, rows, col_widths=None) %}
+<table class="report">
+    {% if col_widths %}
+    <colgroup>
+        {% for w in col_widths %}<col style="width: {{ w }};">{% endfor %}
+    </colgroup>
+    {% endif %}
+    <thead>
+        <tr>
+            {% for h in headers %}<th>{{ h }}</th>{% endfor %}
+        </tr>
+    </thead>
+    <tbody>
+        {% for row in rows %}
+        <tr>
+            {% for cell in row %}<td>{{ cell if cell is not none else '' }}</td>{% endfor %}
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
+{% endmacro %}

@@ -1,0 +1,8 @@
+{% extends "reports/_base.html" %}
+{% import "reports/_macros.html" as m %}
+
+{% block body %}
+{{ m.college_header(college_name) }}
+{{ m.report_title("Invigilator Duty List — " ~ date_str) }}
+{{ m.data_table(headers, rows, col_widths=["6cm", "4cm", "3cm", "9cm", "3.5cm"]) }}
+{% endblock %}

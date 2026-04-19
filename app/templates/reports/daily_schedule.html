@@ -1,0 +1,13 @@
+{% extends "reports/_base.html" %}
+{% import "reports/_macros.html" as m %}
+
+{% block body %}
+{{ m.college_header(college_name) }}
+{{ m.report_title("Daily Exam Schedule — " ~ date_str) }}
+
+{{ m.section_subtitle("Room Schedule") }}
+{{ m.data_table(room_headers, room_rows, col_widths=["3cm", "8cm", "3.5cm", "2.5cm", "11cm"]) }}
+
+{{ m.section_subtitle("Invigilator Duty List") }}
+{{ m.data_table(duty_headers, duty_rows, col_widths=["6cm", "4cm", "3cm", "9cm", "3.5cm"]) }}
+{% endblock %}
